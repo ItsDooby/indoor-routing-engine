@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Indoor Navigation CMS</title>
+    <style>
+        body { font-family: sans-serif; background: #f0f2f5; display: flex; flex-direction: column; align-items: center; padding: 20px; }
+        #control-panel { background: white; padding: 15px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-bottom: 20px; width: 750px; display: flex; justify-content: space-between; align-items: center; }
+        .btn { padding: 8px 16px; border: none; border-radius: 4px; font-weight: bold; cursor: pointer; transition: 0.2s; }
+        .btn.active { background: #007AFF; color: white; }
+        .btn-success { background: #34C759; color: white; }
+        .btn-warning { background: #FF9500; color: white; }
+        #canvas-container { position: relative; background: #ffffff; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); overflow: hidden; margin-bottom: 20px; }
+        canvas { display: block; cursor: crosshair; }
+        #json-output { width: 750px; height: 150px; font-family: monospace; padding: 10px; border-radius: 8px; border: 1px solid #ccc; display: none; }
+    </style>
+</head>
+<body>
+
+    <div id="control-panel">
+        <div>
+            <strong>CMS Mode:</strong>
+            <button id="btn-node" class="btn active" onclick="setMode('node')">1. Add Nodes</button>
+            <button id="btn-edge" class="btn" onclick="setMode('edge')">2. Connect Paths</button>
+            <button id="btn-calib" class="btn btn-warning" onclick="setMode('calibrate')">3. Set Scale (Door)</button>
+        </div>
+        <div>
+            <button class="btn btn-success" onclick="exportGraphData()">Generate JSON</button>
+            <button class="btn" onclick="clearAllData()" style="background: #FF3B30; color: white;">Clear</button>
+        </div>
+    </div>
+
+    <div id="canvas-container">
+        <canvas id="cmsCanvas" width="750" height="500"></canvas>
+    </div>
+
+    <textarea id="json-output" readonly placeholder="Your generated JSON data will appear here..."></textarea>
+
+    <script>
+        const canvas = document.getElementById('cmsCanvas');
+        const ctx = canvas.getContext('2d');
+        const jsonOutput = document.getElementById('json-output');
+
+        // State Storage
+        let cmsGraph = {
+            pixelsPerMeter: null, // Will be set by calibration
+            nodes: {},
+            edges: []
+        };
+        
+        let currentMode = 'node'; 
+        let selectedNodeId = null; 
+        let calibStartPoint = null; 
+
+        // Set Editor Action State
+        function setMode(mode) {
+            currentMode = mode;
+            selectedNodeId = null; 
+            calibStartPoint = null; 
+            
+            document.getElementById('btn-node').classList.toggle('active', mode === 'node');
+            document.getElementById('btn-edge').classList.toggle('active', mode === 'edge');
+            document.getElementById('btn-calib').style.border = mode === 'calibrate' ? '3px solid black' : 'none';
+            
+            redrawCMS();
+        }
+
+        // Click Handler for Canvas
+        canvas.addEventListener('click', function(event) {
+            const rect = canvas.getBoundingClientRect();
+            const x = Math.round(event.clientX - rect.left);
+            const y = Math.round(event.clientY - rect.top);
+
+            if (currentMode === 'node') handleNodeCreation(x, y);
+            else if (currentMode === 'edge') handleEdgeCreation(x, y);
+            else if (currentMode === 'calibrate') handleCalibration(x, y);
+        });
+
+        // Mode 1: Create Node
+        function handleNodeCreation(x, y) {
+            const nodeName = prompt("Enter Node Name/Type (e.g., 'spine_1', 'room_101', 'elevator'):");
+            if (!nodeName) return;
+
+            const id = nodeName.toLowerCase().replace(/\s+/g, '_');
+            let type = 'hallway';
+            let side = '';
+            
+            if (id.startsWith('room_') || id.startsWith('lab_')) {
+                type = 'poi';
+                side = prompt("Which side of the hallway is this on? (left / right / straight):", "left") || "left";
+            }
+
+            cmsGraph.nodes[id] = { id, x, y, type, name: nodeName, side };
+            redrawCMS();
+        }
+
+        // Mode 2: Connect Nodes (Continuous Drawing)
+        function handleEdgeCreation(x, y) {
+            let clickedNodeId = null;
+            for (const node of Object.values(cmsGraph.nodes)) {
+                const distance = Math.sqrt((x - node.x)**2 + (y - node.y)**2);
+                if (distance <= 15) {
+                    clickedNodeId = node.id;
+                    break;
+                }
+            }
+
+            if (!clickedNodeId) return;
+
+            if (selectedNodeId === null) {
+                selectedNodeId = clickedNodeId;
+                redrawCMS();
+            } else {
+                if (selectedNodeId !== clickedNodeId) {
+                    const n1 = cmsGraph.nodes[selectedNodeId];
+                    const n2 = cmsGraph.nodes[clickedNodeId];
+                    const weight = Math.round(Math.sqrt((n1.x - n2.x)**2 + (n1.y - n2.y)**2));
+
+                    cmsGraph.edges.push({ from: selectedNodeId, to: clickedNodeId, weight });
+                }
+                // Keep the chain going for continuous drawing
+                selectedNodeId = clickedNodeId; 
+                redrawCMS();
+            }
+        }
+
+        // Mode 3: Set Scale via Doorway
+        function handleCalibration(x, y) {
+            if (!calibStartPoint) {
+                calibStartPoint = { x, y };
+                alert("Point 1 set. Now click the OTHER side of the doorway.");
+            } else {
+                const distancePixels = Math.sqrt((x - calibStartPoint.x)**2 + (y - calibStartPoint.y)**2);
+                const doorType = prompt("Is this a Single Door (Enter '1' for 1m) or Double Door (Enter '2' for 2m)?", "1");
+                
+                if (doorType) {
+                    const meters = parseFloat(doorType);
+                    if (!isNaN(meters) && meters > 0) {
+                        cmsGraph.pixelsPerMeter = Math.round(distancePixels / meters);
+                        alert(`Scale set! 1 meter = ${cmsGraph.pixelsPerMeter} pixels.`);
+                    }
+                }
+                calibStartPoint = null;
+                setMode('node'); // Auto-revert back to adding nodes
+            }
+        }
+
+        // Visual Canvas Renderer
+        function redrawCMS() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Draw Edges
+            cmsGraph.edges.forEach(edge => {
+                const n1 = cmsGraph.nodes[edge.from];
+                const n2 = cmsGraph.nodes[edge.to];
+                if (n1 && n2) {
+                    ctx.strokeStyle = '#DEE2E6';
+                    ctx.lineWidth = 24; 
+                    ctx.lineCap = 'round';
+                    ctx.beginPath();
+                    ctx.moveTo(n1.x, n1.y);
+                    ctx.lineTo(n2.x, n2.y);
+                    ctx.stroke();
+                }
+            });
+
+            // Draw Nodes
+            Object.values(cmsGraph.nodes).forEach(node => {
+                ctx.fillStyle = node.type === 'poi' ? '#FF9500' : '#8E8E93';
+                
+                if (node.id === selectedNodeId) {
+                    ctx.fillStyle = '#007AFF'; // Highlight active connection node
+                }
+
+                ctx.beginPath();
+                ctx.arc(node.x, node.y, 10, 0, 2 * Math.PI);
+                ctx.fill();
+
+                ctx.fillStyle = '#333333';
+                ctx.font = 'bold 11px sans-serif';
+                ctx.fillText(node.name, node.x + 14, node.y + 4);
+            });
+        }
+
+        // Output JSON
+        function exportGraphData() {
+            if (!cmsGraph.pixelsPerMeter) {
+                alert("Warning: You haven't set the scale yet. Use the 'Set Scale (Door)' tool before exporting for accurate ETA calculations.");
+            }
+            jsonOutput.value = JSON.stringify(cmsGraph, null, 2);
+            jsonOutput.style.display = 'block';
+            jsonOutput.select();
+        }
+
+        function clearAllData() {
+            if (confirm("Are you sure you want to wipe the map clean?")) {
+                cmsGraph = { pixelsPerMeter: null, nodes: {}, edges: [] };
+                setMode('node');
+                jsonOutput.style.display = 'none';
+                redrawCMS();
+            }
+        }
+    </script>
+</body>
+</html>
