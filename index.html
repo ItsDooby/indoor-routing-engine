@@ -159,7 +159,7 @@
         let selectedItem = null; 
         let activePathAnchor = null; 
 
-        // Block default browser right-click menu on the canvas and sidebar
+        // Block default browser right-click menu
         canvas.addEventListener('contextmenu', e => e.preventDefault());
         document.getElementById('sidebar-list').addEventListener('contextmenu', e => e.preventDefault());
 
@@ -272,7 +272,7 @@
             
             // RIGHT CLICK (Button 2) = Select & Edit
             if (e.button === 2) {
-                activePathAnchor = null; // Break drawing chain when editing
+                activePathAnchor = null; 
                 const clickedNodeId = Object.keys(cmsGraph.nodes).find(id => getDist({x,y}, cmsGraph.nodes[id]) <= 12);
                 if (clickedNodeId) {
                     isDraggingNode = true;
@@ -288,7 +288,7 @@
                 return;
             }
 
-            // LEFT CLICK (Button 0) = Draw & Create (No inspector popup)
+            // LEFT CLICK (Button 0) = Draw & Create
             if (e.button === 0) {
                 if (currentMode === 'path') {
                     saveHistory(); 
@@ -309,14 +309,11 @@
 
         canvas.addEventListener('mousemove', function(e) {
             mousePos = getMouseCoords(e);
-            
-            // Dragging a node in real-time (Right Click Hold)
             if (isDraggingNode && selectedItem && selectedItem.type === 'node') {
                 selectedItem.ref.x = mousePos.x;
                 selectedItem.ref.y = mousePos.y;
                 redrawCMS(); 
             }
-            // Drawing the ghost line (Left Click pathing chain)
             else if (currentMode === 'path' && activePathAnchor && !isDraggingNode) {
                 redrawCMS(); 
             }
@@ -327,7 +324,6 @@
             const dist = getDist(dragStartPos, mousePos);
             const wasClick = dist < 5;
 
-            // RIGHT CLICK RELEASE (Stop dragging node)
             if (e.button === 2) {
                 if (isDraggingNode) {
                     isDraggingNode = false;
@@ -336,16 +332,14 @@
                 return;
             }
 
-            // LEFT CLICK RELEASE (Finish Drawing Segment)
             if (e.button === 0) {
                 if (currentMode === 'path') {
                     const {x, y} = mousePos;
-                    
                     let targetNodeId = Object.keys(cmsGraph.nodes).find(id => getDist({x,y}, cmsGraph.nodes[id]) <= 12);
                     
                     if (!targetNodeId) {
                         targetNodeId = 'path_' + Date.now();
-                        cmsGraph.nodes[targetNodeId] = { id: targetNodeId, x, y, type: 'hallway', name: '' };
+                        cmsGraph.nodes[targetNodeId] = { id: targetNodeId, x, y, type: 'hallway', name: Object.keys(cmsGraph.nodes).length === 0 ? 'entry' : '' };
                     }
 
                     if (dragStartNode && dragStartNode.id !== targetNodeId) {
@@ -355,8 +349,6 @@
 
                     activePathAnchor = cmsGraph.nodes[targetNodeId];
                     dragStartNode = null;
-                    
-                    // Notice we DO NOT call selectObject() here. The inspector stays hidden.
                     updateEngine();
                 }
             }
@@ -367,7 +359,8 @@
             const pathEdges = cmsGraph.edges.filter(e => e.type === 'path');
             if (pathEdges.length === 0) { alert("Draw a path first!"); return; }
 
-            const nodeName = "Room " + poiCounter++;
+            const nodeName = prompt("Enter Room Name:", "Room " + poiCounter++);
+            if (!nodeName) return;
             const poiId = 'poi_' + Date.now(); 
             
             let closestEdge = null; let closestDist = Infinity; let snapPoint = null; let snapT = 0;
@@ -378,7 +371,7 @@
                 }
             });
 
-            cmsGraph.nodes[poiId] = { id: poiId, x, y, type: 'poi', name: nodeName, color: '#34C759' };
+            cmsGraph.nodes[poiId] = { id: poiId, x, y, type: 'poi', name: nodeName };
             const anchorId = 'anchor_' + Date.now();
             cmsGraph.nodes[anchorId] = { id: anchorId, x: snapPoint.x, y: snapPoint.y, type: 'hallway', name: '' };
 
@@ -395,7 +388,7 @@
             updateEngine();
         }
 
-        // --- INSPECTOR UI (No Color Changer) ---
+        // --- INSPECTOR UI ---
         function selectObject(type, identifier) {
             document.getElementById('inspector-ui').style.visibility = 'visible';
             if (type === 'node') {
@@ -448,7 +441,6 @@
             Object.values(cmsGraph.nodes).forEach(node => {
                 if (node.type === 'poi' || (node.name && node.name !== '')) {
                     const isSelected = selectedItem && selectedItem.type === 'node' && selectedItem.id === node.id ? 'selected' : '';
-                    // Applied oncontextmenu (Right-click) per your request
                     nodesHtml += `<div class="list-item ${isSelected}" oncontextmenu="event.preventDefault(); selectObject('node', '${node.id}')">
                         <span class="badge-node">Node</span> 
                         <span style="font-weight:bold; flex-grow:1; margin-left:10px;">${node.name || 'Unnamed'}</span>
@@ -459,7 +451,6 @@
 
             cmsGraph.edges.forEach((edge, index) => {
                 const isSelected = selectedItem && selectedItem.type === 'edge' && selectedItem.ref === edge ? 'selected' : '';
-                // Applied oncontextmenu (Right-click) per your request
                 pathsHtml += `<div class="list-item ${isSelected}" oncontextmenu="event.preventDefault(); selectObject('edge', cmsGraph.edges[${index}])">
                     <span class="badge-path">Path</span> 
                     <span style="font-weight:bold; flex-grow:1; margin-left:10px;">${edge.name || 'Connector'}</span>
@@ -546,10 +537,89 @@
                     }
                 });
             }
+
+            // --- DRAW ROUTE (USER MODE) ---
+            if (activeView === 'user' && currentRoutePath && currentRoutePath.length > 1) {
+                ctx.strokeStyle = '#AF52DE'; // Purple navigation route
+                ctx.lineWidth = 8;
+                ctx.lineCap = 'round';
+                ctx.lineJoin = 'round';
+
+                for (let i = 0; i < currentRoutePath.length - 1; i++) {
+                    const id1 = currentRoutePath[i];
+                    const id2 = currentRoutePath[i+1];
+                    const edge = cmsGraph.edges.find(e => 
+                        (e.from === id1 && e.to === id2) || (e.from === id2 && e.to === id1)
+                    );
+
+                    if (edge) {
+                        const n1 = cmsGraph.nodes[edge.from];
+                        const n2 = cmsGraph.nodes[edge.to];
+                        const curveOffset = edge.curve || 0;
+
+                        ctx.beginPath();
+                        ctx.moveTo(n1.x, n1.y);
+
+                        if (curveOffset === 0) {
+                            ctx.lineTo(n2.x, n2.y);
+                        } else {
+                            const midX = (n1.x + n2.x) / 2; const midY = (n1.y + n2.y) / 2;
+                            const dx = n2.x - n1.x; const dy = n2.y - n1.y;
+                            const len = Math.sqrt(dx*dx + dy*dy);
+                            const cx = midX + (-dy/len) * curveOffset;
+                            const cy = midY + (dx/len) * curveOffset;
+                            ctx.quadraticCurveTo(cx, cy, n2.x, n2.y);
+                        }
+                        ctx.stroke();
+                    }
+                }
+
+                const destNode = cmsGraph.nodes[currentRoutePath[currentRoutePath.length - 1]];
+                if (destNode) {
+                    ctx.fillStyle = '#AF52DE'; 
+                    ctx.beginPath();
+                    ctx.arc(destNode.x, destNode.y, 10, 0, 2 * Math.PI);
+                    ctx.fill();
+                    ctx.strokeStyle = 'white';
+                    ctx.lineWidth = 3;
+                    ctx.stroke();
+                }
+            }
         }
 
         function exportGraphData() { jsonOutput.value = JSON.stringify(cmsGraph, null, 2); jsonOutput.style.display = 'block'; jsonOutput.select(); }
-        function populateDestinations() { /* User View Dropdown code... */ }
+        
+        // --- USER APP LOGIC ---
+        function populateDestinations() {
+            const select = document.getElementById('destination-select');
+            select.innerHTML = '<option value="">Select a Room...</option>'; 
+            
+            Object.values(cmsGraph.nodes).forEach(node => {
+                if (node.type === 'poi' && node.name) {
+                    const opt = document.createElement('option');
+                    opt.value = node.id;
+                    opt.innerText = node.name;
+                    select.appendChild(opt);
+                }
+            });
+        }
+
+        function runUserNavigation() {
+            const destId = document.getElementById('destination-select').value;
+            if (!destId) { currentRoutePath = null; redrawCMS(); return; }
+
+            let startId = Object.keys(cmsGraph.nodes).find(id => cmsGraph.nodes[id].name.toLowerCase() === 'entry') || Object.keys(cmsGraph.nodes)[0];
+            
+            if (!startId) { alert("No paths exist on the map yet!"); return; }
+
+            if (typeof aStarPathfinder !== 'undefined') {
+                currentRoutePath = aStarPathfinder(cmsGraph, startId, destId);
+                if (!currentRoutePath) alert("No valid route found to that room.");
+            } else {
+                console.error("Error: pathfinder.js not loaded.");
+            }
+            redrawCMS();
+        }
     </script>
 </body>
 </html>
