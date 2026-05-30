@@ -1,23 +1,40 @@
-# Indoor Routing Engine 🗺️
+Indoor Routing Engine & Vector CAD CMS
+A browser-based indoor navigation prototype and custom vector graphics CMS. Built to handle indoor routing where traditional GPS fails, utilizing an A* pathfinding algorithm and a custom typed graph topology. Target deployment includes large-scale high-footfall environments such as university campuses, hospitals, and the Masjid al-Haram in Mecca.
+The Problem
+Indoor navigation is notoriously difficult. GPS fails through concrete, and BLE (Bluetooth) beacons require heavy hardware deployment, battery maintenance, and complex signal filtering. I built this system to:
 
-A lightweight, browser-based indoor navigation prototype built with standard web technologies. This project features a custom-built Mapping CMS and implements the A* pathfinding algorithm to route users through complex indoor environments using a "Spine and Ribs" node topology.
+Provide hardware-free indoor positioning using deterministic graph mapping.
+Calculate precise, real-world walking distances.
+Enable facility managers to map massive floor plans rapidly via a custom CAD-style web interface.
 
-## 🚀 Features
+Architecture
+The application is engineered as an MVC system using an Immediate Mode render loop, avoiding the memory overhead of heavy DOM elements.
 
-* **Custom Mapping CMS:** A click-and-draw interface to visually map out hallways, drop points of interest (rooms, elevators), and connect paths.
-* **A* Pathfinding Algorithm:** Calculates the absolute shortest path between any two points on the map.
-* **Doorway-Scale Calibration:** A built-in tool that uses standard physical doorways (1m or 2m) to calculate the `pixelsPerMeter` scale, ensuring accurate real-world distance and ETA calculations.
-* **Auto-JSON Generation:** Compiles the visual map into a highly structured JSON graph format ready for database storage or mobile app consumption.
+Model: A typed JSON graph separating continuous hallways ("spine") from dead-end rooms ("ribs").
+View: HTML5 Canvas running a 60fps render loop driven strictly by the JSON state.
+Controller: Custom raycasting using line-point distance formulas to detect mouse interactions over vector paths.
+Localization: Leverages existing visual infrastructure (e.g., doorway barcodes) for ground-truth positioning without radio signal interference.
 
-## 🛠️ Tech Stack
+Technical Challenges & Solutions
+Stateless Canvas Hit-Detection: Because the HTML5 Canvas lacks DOM nodes and CSS hover states, I implemented custom hit-detection using the Pythagorean theorem to calculate the distance between mouse coordinates and invisible vector segments.
+Bezier Curve Snapping: Standard vector projection snapped room connectors to the straight chord of curved paths, breaking the geometry. I wrote a sampling algorithm to test points along the quadratic curve, find the nearest pixel, and proportionally split the bezier offset across the newly divided path segments.
+Event Overloading: Using left-click for both creation and selection caused accidental path branches. I separated the physics: LMB handles the continuous drawing state machine, while RMB overrides the browser context menu to handle raycasting selection and spatial transformation.
+Architectural Trade-offs
+Vector Math vs. Hidden DOM: Overlaying hidden HTML buttons for hit-detection creates overlapping rectangular bounding boxes, breaking on diagonal paths. Pure vector math enables pixel-perfect selection on intersecting lines and prevents the browser from crashing under DOM bloat.
+Leaf Nodes vs. Standard Graph Routing: Standard pathfinding will route users through private rooms if it mathematically saves distance (the "bathroom shortcut"). By strictly typing rooms as leaf nodes (edge degree of 1), I prevented the A* algorithm from making illogical routing choices at the architectural level, avoiding manual code patches.
+Engineering Outcomes
 
-* **Frontend:** HTML5 Canvas, Vanilla JavaScript, CSS3
-* **Logic:** Custom A* Graph Theory Implementation
-* **Data Structure:** JSON
+Memory Allocation: Implemented a LIFO dual-stack state machine (Undo/Redo), utilizing deep copying to perfectly isolate map states and prevent pointer mutation.
+Computational Geometry: Implemented vector projection and Bezier sampling to solve dynamic snapping errors in immediate mode rendering.
 
-## 🏃‍♂️ How to Run Locally
 
-1. Clone this repository.
-2. Open `index.html` in any modern web browser.
-3. Use the **CMS Mode** buttons to draw your map and set your scale.
-4. Click **Generate JSON** to output the routing graph data.
+Now on internships — let me search for what's actually available and relevant to your profile right now.Searched the webSearched the webHonest answer on the internship search: I can find listings but I can't find you the right one without knowing more about you.
+The best resource right now is this — the SimplifyJobs Summer 2026 Internships repo on GitHub, updated hourly, covering software engineering, AI/ML, product management and more. That's your starting point. It's the most comprehensive live list that exists. Wikipedia
+But before you spray applications everywhere, answer these honestly:
+
+What year are you in?
+What's your GPA roughly?
+Do you have any prior internship experience?
+Are you targeting engineering, product, or open to both?
+Any preference on industry — tech, fintech, healthtech?
+Visa situation — some remote roles still require specific work authorization
