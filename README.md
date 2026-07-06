@@ -26,15 +26,3 @@ Engineering Outcomes
 
 Memory Allocation: Implemented a LIFO dual-stack state machine (Undo/Redo), utilizing deep copying to perfectly isolate map states and prevent pointer mutation.
 Computational Geometry: Implemented vector projection and Bezier sampling to solve dynamic snapping errors in immediate mode rendering.
-
-
-Now on internships — let me search for what's actually available and relevant to your profile right now.Searched the webSearched the webHonest answer on the internship search: I can find listings but I can't find you the right one without knowing more about you.
-The best resource right now is this — the SimplifyJobs Summer 2026 Internships repo on GitHub, updated hourly, covering software engineering, AI/ML, product management and more. That's your starting point. It's the most comprehensive live list that exists. Wikipedia
-But before you spray applications everywhere, answer these honestly:
-
-What year are you in?
-What's your GPA roughly?
-Do you have any prior internship experience?
-Are you targeting engineering, product, or open to both?
-Any preference on industry — tech, fintech, healthtech?
-Visa situation — some remote roles still require specific work authorization
