@@ -84,6 +84,8 @@
                 <div class="panel" style="justify-content: flex-start; gap: 15px; padding: 10px 15px;">
                     <label style="font-weight: bold; font-size: 14px;">🗺️ Load Blueprint:</label>
                     <input type="file" id="blueprint-upload" accept="image/*" style="font-size: 14px;">
+                    <span style="color: #ccc;">|</span>
+                    <button class="btn" style="background: #5856D6; color: white;" onclick="loadSampleFloorPlan()">✨ Try Sample Blueprint</button>
                 </div>
 
                 <div class="panel" style="display: flex; flex-wrap: wrap; gap: 10px;">
@@ -98,7 +100,7 @@
                         <input type="text" id="prop-name" placeholder="Name / Label" style="padding: 4px; border: 1px solid #ccc; border-radius: 4px; width: 120px;">
                         
                         <span id="curve-ui" style="display: none; font-size: 12px; font-weight: bold; color: #555; align-items: center; gap: 5px;">
-                            Curve: <input type="range" id="prop-curve" min="-150" max="150" value="0" style="width: 80px;" oninput="updateLiveCurve()">
+                            Curve: <input type="range" id="prop-curve" min="-400" max="400" value="0" style="width: 80px;" oninput="updateLiveCurve()">
                         </span>
                         
                         <button class="btn btn-blue" style="padding: 4px 10px; margin-left: auto;" onclick="saveProperties()">Save / Deselect</button>
@@ -111,7 +113,12 @@
             </div>
 
             <div id="user-panel" class="panel" style="display: none;">
-                <div style="font-size: 16px;"><strong>📍 You are at:</strong> Main Entrance</div>
+                <div>
+                    <strong>📍 You are at:</strong>
+                    <select id="start-select" onchange="runUserNavigation()" style="padding: 8px; border-radius: 4px; font-size: 14px; margin-left: 10px;">
+                        <option value="">Select your location...</option>
+                    </select>
+                </div>
                 <div>
                     <strong>Navigate to:</strong>
                     <select id="destination-select" onchange="runUserNavigation()" style="padding: 8px; border-radius: 4px; font-size: 14px; margin-left: 10px;">
@@ -150,6 +157,11 @@
         let backgroundImage = new Image(); let isImageLoaded = false;
         let activeView = 'admin'; let currentRoutePath = null; 
         let poiCounter = 1; let pathCounter = 1;
+        let uidCounter = 0;
+        // Date.now() alone can collide if two nodes are created within the same millisecond
+        // (e.g. scripted/batch creation like the sample layout generator below). Appending a
+        // monotonic counter guarantees uniqueness regardless of timing.
+        function nextId(prefix) { return prefix + '_' + Date.now() + '_' + (++uidCounter); }
 
         // Interaction State
         let isDraggingNode = false; 
@@ -159,7 +171,7 @@
         let selectedItem = null; 
         let activePathAnchor = null; 
 
-        // Block default browser right-click menu
+        // Block default browser right-click menu on the canvas and sidebar
         canvas.addEventListener('contextmenu', e => e.preventDefault());
         document.getElementById('sidebar-list').addEventListener('contextmenu', e => e.preventDefault());
 
@@ -178,10 +190,19 @@
             }
         }
 
+        function redo() {
+            if (redoStack.length > 0) {
+                undoStack.push(JSON.parse(JSON.stringify(cmsGraph)));
+                cmsGraph = redoStack.pop();
+                selectedItem = null; activePathAnchor = null; updateEngine();
+            }
+        }
+
         window.addEventListener('keydown', function(e) {
             if (activeView !== 'admin' || document.activeElement.tagName === 'INPUT') return;
             if (e.key === 'Escape') { activePathAnchor = null; selectedItem = null; updateEngine(); }
             if (e.ctrlKey && e.key === 'z') { e.preventDefault(); undo(); }
+            if (e.ctrlKey && e.key === 'y') { e.preventDefault(); redo(); }
             if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); deleteSelected(); }
         });
 
@@ -194,6 +215,66 @@
             };
             reader.readAsDataURL(file);
         });
+
+        function loadSampleFloorPlan() {
+            const hasWork = Object.keys(cmsGraph.nodes).length > 0 || cmsGraph.edges.length > 0;
+            if (hasWork && !confirm("This clears your current layout and loads a sample blueprint to trace. Continue?")) return;
+
+            saveHistory();
+            cmsGraph = { pixelsPerMeter: 30, nodes: {}, edges: [] };
+            selectedItem = null; activePathAnchor = null; currentRoutePath = null;
+            document.getElementById('inspector-ui').style.visibility = 'hidden';
+
+            // This is just a reference image to trace over live - no nodes/edges are created.
+            // Drawn procedurally so it's instant and has zero dependency on an external asset.
+            const off = document.createElement('canvas');
+            off.width = canvas.width; off.height = canvas.height;
+            const octx = off.getContext('2d');
+            octx.fillStyle = '#fafafa'; octx.fillRect(0, 0, off.width, off.height);
+
+            // "D" shaped corridor outline: straight left/top/bottom walls + one true semicircular
+            // arc on the right, dashed so it reads as a guide rather than a real drawn path.
+            const cx = 650, cy = 300, R = 150;
+            octx.strokeStyle = '#ccc'; octx.lineWidth = 2; octx.setLineDash([6, 4]);
+            octx.beginPath();
+            octx.moveTo(250, 150);
+            octx.lineTo(650, 150);
+            octx.arc(cx, cy, R, -Math.PI / 2, Math.PI / 2, false);
+            octx.lineTo(250, 450);
+            octx.lineTo(250, 150);
+            octx.stroke();
+            octx.setLineDash([]);
+
+            // Room placeholders around the perimeter, showing where to drop each POI live.
+            const boxSize = 44;
+            const drawRoomBox = (x, y, label) => {
+                octx.strokeStyle = '#bbb'; octx.lineWidth = 1.5;
+                octx.strokeRect(x - boxSize / 2, y - boxSize / 2, boxSize, boxSize);
+                octx.fillStyle = '#999'; octx.font = '11px sans-serif'; octx.textAlign = 'center';
+                octx.fillText(label, x, y + 4);
+            };
+
+            const roomSpots = [
+                [320, 90], [400, 90], [480, 90], [560, 90],       // top wall
+                [190, 220], [190, 380],                            // left wall
+                [320, 510], [400, 510], [480, 510], [560, 510],   // bottom wall
+                [cx + 210 * Math.cos(-1.0), cy + 210 * Math.sin(-1.0)],
+                [cx + 210 * Math.cos(-0.5), cy + 210 * Math.sin(-0.5)],
+                [cx + 210 * Math.cos(0), cy + 210 * Math.sin(0)],
+                [cx + 210 * Math.cos(0.5), cy + 210 * Math.sin(0.5)],
+                [cx + 210 * Math.cos(1.0), cy + 210 * Math.sin(1.0)] // right arc, radially outward
+            ];
+            roomSpots.forEach(([x, y], i) => drawRoomBox(Math.round(x), Math.round(y), 'Room ' + (i + 1)));
+
+            octx.fillStyle = '#666'; octx.font = 'bold 13px sans-serif'; octx.textAlign = 'left';
+            octx.fillText('ENTRANCE →', 100, 555);
+
+            backgroundImage.src = off.toDataURL();
+            backgroundImage.onload = function() {
+                isImageLoaded = true;
+                updateEngine();
+            };
+        }
 
         function switchView(view) {
             activeView = view;
@@ -272,7 +353,7 @@
             
             // RIGHT CLICK (Button 2) = Select & Edit
             if (e.button === 2) {
-                activePathAnchor = null; 
+                activePathAnchor = null; // Break drawing chain when editing
                 const clickedNodeId = Object.keys(cmsGraph.nodes).find(id => getDist({x,y}, cmsGraph.nodes[id]) <= 12);
                 if (clickedNodeId) {
                     isDraggingNode = true;
@@ -288,16 +369,31 @@
                 return;
             }
 
-            // LEFT CLICK (Button 0) = Draw & Create
+            // LEFT CLICK (Button 0) = Draw & Create (No inspector popup)
             if (e.button === 0) {
                 if (currentMode === 'path') {
-                    saveHistory(); 
-                    let clickedNodeId = Object.keys(cmsGraph.nodes).find(id => getDist({x,y}, cmsGraph.nodes[id]) <= 15);
-                    if (!clickedNodeId) {
-                        clickedNodeId = 'path_' + Date.now();
-                        cmsGraph.nodes[clickedNodeId] = { id: clickedNodeId, x, y, type: 'hallway', name: '' };
+                    saveHistory();
+                    // Previous bug: this always found/created a node under the cursor and used
+                    // THAT as the segment start, ignoring any chain already in progress. So a
+                    // second click in a "chained" sequence created a brand new disconnected node
+                    // instead of continuing from the last point - no edge ever formed, even
+                    // though the ghost line made it look like it was connecting. If a chain anchor
+                    // is already active, continue FROM it instead of starting a new node here.
+                    let startNode;
+                    if (activePathAnchor) {
+                        startNode = activePathAnchor;
+                    } else {
+                        let clickedNodeId = Object.keys(cmsGraph.nodes).find(id => getDist({x,y}, cmsGraph.nodes[id]) <= 15);
+                        if (!clickedNodeId) {
+                            clickedNodeId = nextId('path');
+                            cmsGraph.nodes[clickedNodeId] = { id: clickedNodeId, x, y, type: 'hallway', name: '' };
+                        }
+                        startNode = cmsGraph.nodes[clickedNodeId];
                     }
-                    dragStartNode = cmsGraph.nodes[clickedNodeId];
+                    dragStartNode = startNode;
+                    // Set the anchor immediately (not just on mouseup) so the ghost line tracks
+                    // correctly from the very first drag too, not only after the first click lands.
+                    activePathAnchor = startNode;
                     mousePos = {x, y};
                 } 
                 else if (currentMode === 'poi') {
@@ -309,11 +405,14 @@
 
         canvas.addEventListener('mousemove', function(e) {
             mousePos = getMouseCoords(e);
+            
+            // Dragging a node in real-time (Right Click Hold)
             if (isDraggingNode && selectedItem && selectedItem.type === 'node') {
                 selectedItem.ref.x = mousePos.x;
                 selectedItem.ref.y = mousePos.y;
                 redrawCMS(); 
             }
+            // Drawing the ghost line (Left Click pathing chain)
             else if (currentMode === 'path' && activePathAnchor && !isDraggingNode) {
                 redrawCMS(); 
             }
@@ -324,6 +423,7 @@
             const dist = getDist(dragStartPos, mousePos);
             const wasClick = dist < 5;
 
+            // RIGHT CLICK RELEASE (Stop dragging node)
             if (e.button === 2) {
                 if (isDraggingNode) {
                     isDraggingNode = false;
@@ -332,14 +432,16 @@
                 return;
             }
 
+            // LEFT CLICK RELEASE (Finish Drawing Segment)
             if (e.button === 0) {
                 if (currentMode === 'path') {
                     const {x, y} = mousePos;
+                    
                     let targetNodeId = Object.keys(cmsGraph.nodes).find(id => getDist({x,y}, cmsGraph.nodes[id]) <= 12);
                     
                     if (!targetNodeId) {
-                        targetNodeId = 'path_' + Date.now();
-                        cmsGraph.nodes[targetNodeId] = { id: targetNodeId, x, y, type: 'hallway', name: Object.keys(cmsGraph.nodes).length === 0 ? 'entry' : '' };
+                        targetNodeId = nextId('path');
+                        cmsGraph.nodes[targetNodeId] = { id: targetNodeId, x, y, type: 'hallway', name: '' };
                     }
 
                     if (dragStartNode && dragStartNode.id !== targetNodeId) {
@@ -347,21 +449,52 @@
                         cmsGraph.edges.push({ from: dragStartNode.id, to: targetNodeId, type: 'path', weight, name: 'Path ' + pathCounter++, color: '#007AFF', curve: 0 });
                     }
 
-                    activePathAnchor = cmsGraph.nodes[targetNodeId];
+                    // Click: keep the anchor so the ghost line keeps following the cursor for the
+                    // next chained point. Drag: the segment is done, so drop the anchor instead of
+                    // auto-continuing the chain from the point you just dropped.
+                    activePathAnchor = wasClick ? cmsGraph.nodes[targetNodeId] : null;
                     dragStartNode = null;
+                    
+                    // Notice we DO NOT call selectObject() here. The inspector stays hidden.
                     updateEngine();
                 }
             }
         });
+
+        // Splits a quadratic bezier (defined by chord P0->P2 + perpendicular offset cOffset)
+        // at parameter t into two new offset values, one per sub-chord. Uses real de Casteljau
+        // subdivision then re-projects each new control point onto its own sub-chord's normal,
+        // since this codebase stores curvature as a scalar sagitta rather than a raw control point.
+        // Projects a point onto a chord's own perpendicular offset scalar - the inverse of how
+        // the renderer turns curve offsets into control points. Shared by curve splitting
+        // (POI drops on curved edges) and by the sample layout generator's arc segments.
+        function chordOffset(Pa, Pb, point) {
+            const m = { x: (Pa.x + Pb.x) / 2, y: (Pa.y + Pb.y) / 2 };
+            const ddx = Pb.x - Pa.x, ddy = Pb.y - Pa.y;
+            const l = Math.sqrt(ddx * ddx + ddy * ddy) || 1;
+            return (point.x - m.x) * (-ddy / l) + (point.y - m.y) * (ddx / l);
+        }
+
+        function splitCurveOffset(P0, P2, cOffset, t) {
+            const mid = { x: (P0.x + P2.x) / 2, y: (P0.y + P2.y) / 2 };
+            const dx = P2.x - P0.x, dy = P2.y - P0.y;
+            const len = Math.sqrt(dx * dx + dy * dy) || 1;
+            const P1 = { x: mid.x + (-dy / len) * cOffset, y: mid.y + (dx / len) * cOffset };
+
+            const A = { x: P0.x + t * (P1.x - P0.x), y: P0.y + t * (P1.y - P0.y) };
+            const B = { x: P1.x + t * (P2.x - P1.x), y: P1.y + t * (P2.y - P1.y) };
+            const M = { x: A.x + t * (B.x - A.x), y: A.y + t * (B.y - A.y) };
+
+            return { offset1: chordOffset(P0, M, A), offset2: chordOffset(M, P2, B) };
+        }
 
         // --- CORE LOGIC ---
         function handlePOICreation(x, y) {
             const pathEdges = cmsGraph.edges.filter(e => e.type === 'path');
             if (pathEdges.length === 0) { alert("Draw a path first!"); return; }
 
-            const nodeName = prompt("Enter Room Name:", "Room " + poiCounter++);
-            if (!nodeName) return;
-            const poiId = 'poi_' + Date.now(); 
+            const nodeName = "Room " + poiCounter++;
+            const poiId = nextId('poi');
             
             let closestEdge = null; let closestDist = Infinity; let snapPoint = null; let snapT = 0;
             pathEdges.forEach(edge => {
@@ -371,15 +504,27 @@
                 }
             });
 
-            cmsGraph.nodes[poiId] = { id: poiId, x, y, type: 'poi', name: nodeName };
-            const anchorId = 'anchor_' + Date.now();
+            cmsGraph.nodes[poiId] = { id: poiId, x, y, type: 'poi', name: nodeName, color: '#34C759' };
+            const anchorId = nextId('anchor');
             cmsGraph.nodes[anchorId] = { id: anchorId, x: snapPoint.x, y: snapPoint.y, type: 'hallway', name: '' };
 
             cmsGraph.edges = cmsGraph.edges.filter(e => e !== closestEdge); 
             
+            // Previously this scaled the parent edge's curve offset by snapT/(1-snapT) and
+            // reapplied it to the two new sub-chords. That's wrong because the offset is a
+            // perpendicular sagitta relative to a chord's own normal direction, and the two new
+            // sub-chords point in different directions than the parent chord — reapplying a scaled
+            // offset meant for one normal direction to two different normal directions produced
+            // the wonky curves. Plain 0/0 (straight segments) avoided that but faceted any real
+            // curve into a visible triangle. This does a proper de Casteljau split instead, so the
+            // two new segments continue the original bend smoothly through the anchor point.
             let cOffset = closestEdge.curve || 0;
-            let newCurve1 = cOffset !== 0 ? cOffset * snapT : 0;
-            let newCurve2 = cOffset !== 0 ? cOffset * (1 - snapT) : 0;
+            let newCurve1 = 0, newCurve2 = 0;
+            if (cOffset !== 0) {
+                const split = splitCurveOffset(cmsGraph.nodes[closestEdge.from], cmsGraph.nodes[closestEdge.to], cOffset, snapT);
+                newCurve1 = split.offset1;
+                newCurve2 = split.offset2;
+            }
 
             cmsGraph.edges.push({ from: closestEdge.from, to: anchorId, type: 'path', weight: getDist(cmsGraph.nodes[closestEdge.from], snapPoint), name: closestEdge.name, color: closestEdge.color, curve: newCurve1 });
             cmsGraph.edges.push({ from: anchorId, to: closestEdge.to, type: 'path', weight: getDist(snapPoint, cmsGraph.nodes[closestEdge.to]), name: closestEdge.name, color: closestEdge.color, curve: newCurve2 });
@@ -388,7 +533,7 @@
             updateEngine();
         }
 
-        // --- INSPECTOR UI ---
+        // --- INSPECTOR UI (No Color Changer) ---
         function selectObject(type, identifier) {
             document.getElementById('inspector-ui').style.visibility = 'visible';
             if (type === 'node') {
@@ -441,6 +586,7 @@
             Object.values(cmsGraph.nodes).forEach(node => {
                 if (node.type === 'poi' || (node.name && node.name !== '')) {
                     const isSelected = selectedItem && selectedItem.type === 'node' && selectedItem.id === node.id ? 'selected' : '';
+                    // Applied oncontextmenu (Right-click) per your request
                     nodesHtml += `<div class="list-item ${isSelected}" oncontextmenu="event.preventDefault(); selectObject('node', '${node.id}')">
                         <span class="badge-node">Node</span> 
                         <span style="font-weight:bold; flex-grow:1; margin-left:10px;">${node.name || 'Unnamed'}</span>
@@ -451,6 +597,7 @@
 
             cmsGraph.edges.forEach((edge, index) => {
                 const isSelected = selectedItem && selectedItem.type === 'edge' && selectedItem.ref === edge ? 'selected' : '';
+                // Applied oncontextmenu (Right-click) per your request
                 pathsHtml += `<div class="list-item ${isSelected}" oncontextmenu="event.preventDefault(); selectObject('edge', cmsGraph.edges[${index}])">
                     <span class="badge-path">Path</span> 
                     <span style="font-weight:bold; flex-grow:1; margin-left:10px;">${edge.name || 'Connector'}</span>
@@ -515,6 +662,35 @@
                 }
             });
 
+            if (activeView === 'user' && currentRoutePath && currentRoutePath.length > 1) {
+                ctx.strokeStyle = '#FF3B30'; ctx.lineWidth = 6; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+                ctx.beginPath();
+                const firstNode = cmsGraph.nodes[currentRoutePath[0]];
+                if (firstNode) ctx.moveTo(firstNode.x, firstNode.y);
+                for (let i = 0; i < currentRoutePath.length - 1; i++) {
+                    const n1 = cmsGraph.nodes[currentRoutePath[i]];
+                    const n2 = cmsGraph.nodes[currentRoutePath[i + 1]];
+                    if (!n1 || !n2) continue;
+                    const edge = cmsGraph.edges.find(e => (e.from === n1.id && e.to === n2.id) || (e.from === n2.id && e.to === n1.id));
+                    let offset = edge ? (edge.curve || 0) : 0;
+                    if (edge && edge.from === n2.id) offset = -offset; // edge stored reversed relative to travel direction
+                    if (offset === 0) {
+                        ctx.lineTo(n2.x, n2.y);
+                    } else {
+                        const midX = (n1.x + n2.x) / 2, midY = (n1.y + n2.y) / 2;
+                        const dx = n2.x - n1.x, dy = n2.y - n1.y;
+                        const len = Math.sqrt(dx * dx + dy * dy) || 1;
+                        ctx.quadraticCurveTo(midX + (-dy / len) * offset, midY + (dx / len) * offset, n2.x, n2.y);
+                    }
+                }
+                ctx.stroke();
+
+                const startN = cmsGraph.nodes[currentRoutePath[0]];
+                const endN = cmsGraph.nodes[currentRoutePath[currentRoutePath.length - 1]];
+                if (startN) { ctx.fillStyle = '#007AFF'; ctx.beginPath(); ctx.arc(startN.x, startN.y, 9, 0, 2 * Math.PI); ctx.fill(); }
+                if (endN) { ctx.fillStyle = '#34C759'; ctx.beginPath(); ctx.arc(endN.x, endN.y, 9, 0, 2 * Math.PI); ctx.fill(); }
+            }
+
             if (activeView === 'admin' && currentMode === 'path' && activePathAnchor && !isDraggingNode) {
                 ctx.strokeStyle = 'rgba(0, 122, 255, 0.5)'; ctx.lineWidth = 12; ctx.lineCap = 'round';
                 ctx.beginPath(); ctx.moveTo(activePathAnchor.x, activePathAnchor.y); ctx.lineTo(mousePos.x, mousePos.y); ctx.stroke();
@@ -537,87 +713,67 @@
                     }
                 });
             }
-
-            // --- DRAW ROUTE (USER MODE) ---
-            if (activeView === 'user' && currentRoutePath && currentRoutePath.length > 1) {
-                ctx.strokeStyle = '#AF52DE'; // Purple navigation route
-                ctx.lineWidth = 8;
-                ctx.lineCap = 'round';
-                ctx.lineJoin = 'round';
-
-                for (let i = 0; i < currentRoutePath.length - 1; i++) {
-                    const id1 = currentRoutePath[i];
-                    const id2 = currentRoutePath[i+1];
-                    const edge = cmsGraph.edges.find(e => 
-                        (e.from === id1 && e.to === id2) || (e.from === id2 && e.to === id1)
-                    );
-
-                    if (edge) {
-                        const n1 = cmsGraph.nodes[edge.from];
-                        const n2 = cmsGraph.nodes[edge.to];
-                        const curveOffset = edge.curve || 0;
-
-                        ctx.beginPath();
-                        ctx.moveTo(n1.x, n1.y);
-
-                        if (curveOffset === 0) {
-                            ctx.lineTo(n2.x, n2.y);
-                        } else {
-                            const midX = (n1.x + n2.x) / 2; const midY = (n1.y + n2.y) / 2;
-                            const dx = n2.x - n1.x; const dy = n2.y - n1.y;
-                            const len = Math.sqrt(dx*dx + dy*dy);
-                            const cx = midX + (-dy/len) * curveOffset;
-                            const cy = midY + (dx/len) * curveOffset;
-                            ctx.quadraticCurveTo(cx, cy, n2.x, n2.y);
-                        }
-                        ctx.stroke();
-                    }
-                }
-
-                const destNode = cmsGraph.nodes[currentRoutePath[currentRoutePath.length - 1]];
-                if (destNode) {
-                    ctx.fillStyle = '#AF52DE'; 
-                    ctx.beginPath();
-                    ctx.arc(destNode.x, destNode.y, 10, 0, 2 * Math.PI);
-                    ctx.fill();
-                    ctx.strokeStyle = 'white';
-                    ctx.lineWidth = 3;
-                    ctx.stroke();
-                }
-            }
         }
 
         function exportGraphData() { jsonOutput.value = JSON.stringify(cmsGraph, null, 2); jsonOutput.style.display = 'block'; jsonOutput.select(); }
-        
-        // --- USER APP LOGIC ---
+
+        // The CMS has no explicit "this is the entry point" flag. We infer it: prefer a node
+        // literally with id 'entry' (matches the sample graph.js), otherwise fall back to the
+        // first node named "Main Entrance". Returns null if neither exists yet.
+        function findEntryNode() {
+            return cmsGraph.nodes['entry']
+                || Object.values(cmsGraph.nodes).find(n => n.name === 'Main Entrance')
+                || null;
+        }
+
         function populateDestinations() {
-            const select = document.getElementById('destination-select');
-            select.innerHTML = '<option value="">Select a Room...</option>'; 
-            
-            Object.values(cmsGraph.nodes).forEach(node => {
-                if (node.type === 'poi' && node.name) {
-                    const opt = document.createElement('option');
-                    opt.value = node.id;
-                    opt.innerText = node.name;
-                    select.appendChild(opt);
-                }
+            const namedNodes = Object.values(cmsGraph.nodes)
+                .filter(n => n.type === 'poi' || (n.name && n.name !== ''))
+                .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+
+            const destSelect = document.getElementById('destination-select');
+            destSelect.innerHTML = '<option value="">Select a Room...</option>';
+            namedNodes.filter(n => n.type === 'poi').forEach(n => {
+                const opt = document.createElement('option');
+                opt.value = n.id;
+                opt.textContent = n.name || 'Unnamed room';
+                destSelect.appendChild(opt);
             });
+
+            const startSelect = document.getElementById('start-select');
+            startSelect.innerHTML = '<option value="">Select your location...</option>';
+            namedNodes.forEach(n => {
+                const opt = document.createElement('option');
+                opt.value = n.id;
+                opt.textContent = n.name || 'Unnamed';
+                startSelect.appendChild(opt);
+            });
+
+            // Convenience default: preselect the entry point if one exists, but the person can change it.
+            const entryNode = findEntryNode();
+            if (entryNode) startSelect.value = entryNode.id;
         }
 
         function runUserNavigation() {
+            const startId = document.getElementById('start-select').value;
             const destId = document.getElementById('destination-select').value;
-            if (!destId) { currentRoutePath = null; redrawCMS(); return; }
+            currentRoutePath = null;
+            if (!startId || !destId) { redrawCMS(); return; }
 
-            let startId = Object.keys(cmsGraph.nodes).find(id => cmsGraph.nodes[id].name.toLowerCase() === 'entry') || Object.keys(cmsGraph.nodes)[0];
-            
-            if (!startId) { alert("No paths exist on the map yet!"); return; }
-
-            if (typeof aStarPathfinder !== 'undefined') {
-                currentRoutePath = aStarPathfinder(cmsGraph, startId, destId);
-                if (!currentRoutePath) alert("No valid route found to that room.");
-            } else {
-                console.error("Error: pathfinder.js not loaded.");
+            if (startId === destId) {
+                alert("You're already there.");
+                redrawCMS();
+                return;
             }
+
+            const path = aStarPathfinder(cmsGraph, startId, destId);
+            if (!path) {
+                alert("No route could be found between those two points. Check that they're connected to the hallway network.");
+                redrawCMS();
+                return;
+            }
+
+            currentRoutePath = path;
             redrawCMS();
         }
     </script>
